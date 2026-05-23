@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fooball Ana</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="workspace">
+        <aside class="panel">
+          <div>
+            <p class="eyebrow">Match Video Analysis</p>
+            <h1>Fooball Ana</h1>
+          </div>
+
+          <label class="dropzone" for="videoInput">
+            <input id="videoInput" type="file" accept="video/*" />
+            <span class="dropIcon">+</span>
+            <span>&#x8A66;&#x5408;&#x52D5;&#x753B;&#x3092;&#x9078;&#x629E;</span>
+          </label>
+
+          <div class="actions">
+            <button id="analyzeButton" type="button" disabled>&#x89E3;&#x6790;&#x3092;&#x958B;&#x59CB;</button>
+            <button id="sampleButton" class="secondary" type="button">&#x30B5;&#x30F3;&#x30D7;&#x30EB;&#x3092;&#x8868;&#x793A;</button>
+            <button id="samplePlaybackButton" class="secondary" type="button" disabled>&#x30B5;&#x30F3;&#x30D7;&#x30EB;&#x518D;&#x751F;</button>
+          </div>
+          <p id="status" class="status">&#x52D5;&#x753B;&#x3092;&#x9078;&#x629E;&#x3059;&#x308B;&#x304B;&#x3001;&#x30B5;&#x30F3;&#x30D7;&#x30EB;&#x3092;&#x8868;&#x793A;&#x3057;&#x3066;&#x304F;&#x3060;&#x3055;&#x3044;&#x3002;</p>
+        </aside>
+
+        <section id="viewer" class="viewer">
+          <video id="preview" controls></video>
+          <canvas id="overlay"></canvas>
+        </section>
+      </section>
+
+      <section class="metrics">
+        <article>
+          <span>&#x6642;&#x9593;</span>
+          <strong id="duration">--</strong>
+        </article>
+        <article>
+          <span>&#x89E3;&#x50CF;&#x5EA6;</span>
+          <strong id="resolution">--</strong>
+        </article>
+        <article>
+          <span>Team A Possession</span>
+          <strong id="teamA">--</strong>
+        </article>
+        <article>
+          <span>Team B Possession</span>
+          <strong id="teamB">--</strong>
+        </article>
+      </section>
+
+      <section class="summary">
+        <h2>&#x89E3;&#x6790;&#x30B5;&#x30DE;&#x30EA;</h2>
+        <pre id="summary">{}</pre>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>
+

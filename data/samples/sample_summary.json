@@ -1,0 +1,58 @@
+{
+  "job_id": "sample-match-001",
+  "metadata": {
+    "duration_seconds": 600,
+    "fps": 30,
+    "width": 1280,
+    "height": 720,
+    "frame_count": 18000
+  },
+  "teams": [
+    {
+      "name": "Team A",
+      "color_hex": "#e53935",
+      "possession_rate": 0.57,
+      "estimated_passes": 82,
+      "estimated_shots": 9
+    },
+    {
+      "name": "Team B",
+      "color_hex": "#1e88e5",
+      "possession_rate": 0.43,
+      "estimated_passes": 64,
+      "estimated_shots": 6
+    }
+  ],
+  "players": [
+    {
+      "track_id": "A-07",
+      "team": "Team A",
+      "distance_meters": 1124,
+      "confidence": 0.86
+    },
+    {
+      "track_id": "A-10",
+      "team": "Team A",
+      "distance_meters": 980,
+      "confidence": 0.82
+    },
+    {
+      "track_id": "B-04",
+      "team": "Team B",
+      "distance_meters": 1042,
+      "confidence": 0.8
+    },
+    {
+      "track_id": "B-11",
+      "team": "Team B",
+      "distance_meters": 1188,
+      "confidence": 0.78
+    }
+  ],
+  "ball_touch_candidates": 146,
+  "notes": [
+    "これはデモ用のサンプルデータです。",
+    "赤と青のユニフォーム色を仮定してチーム分類しています。",
+    "次の段階で実動画から人物・ボール検出を行います。"
+  ]
+}

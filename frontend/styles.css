@@ -1,0 +1,195 @@
+:root {
+  color-scheme: dark;
+  font-family: Arial, "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+  background: #101410;
+  color: #f2f6ef;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.shell {
+  min-height: 100vh;
+  padding: 24px;
+  display: grid;
+  gap: 18px;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 18px;
+  min-height: 58vh;
+}
+
+.panel {
+  border: 1px solid #2e3a31;
+  background: #171d18;
+  border-radius: 8px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: #88b28c;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+h1,
+h2 {
+  margin: 0;
+}
+
+.dropzone {
+  min-height: 150px;
+  border: 1px dashed #6f8f75;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  text-align: center;
+  cursor: pointer;
+  color: #d8e7d2;
+}
+
+.dropzone input {
+  display: none;
+}
+
+.dropIcon {
+  width: 40px;
+  height: 40px;
+  border: 1px solid #6f8f75;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+}
+
+button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 6px;
+  background: #d7ff64;
+  color: #172000;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.actions {
+  display: grid;
+  gap: 10px;
+}
+
+.secondary {
+  border: 1px solid #6f8f75;
+  background: transparent;
+  color: #d8e7d2;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.status {
+  margin: 0;
+  color: #aebdae;
+  line-height: 1.5;
+}
+
+.viewer {
+  position: relative;
+  min-height: 420px;
+  border: 1px solid #2e3a31;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #050705;
+}
+
+.viewer video,
+.viewer canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.viewer canvas {
+  pointer-events: none;
+}
+
+.viewer.sample video {
+  opacity: 0;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metrics article,
+.summary {
+  border: 1px solid #2e3a31;
+  background: #171d18;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.metrics span {
+  display: block;
+  color: #aebdae;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.metrics strong {
+  font-size: 24px;
+}
+
+.summary {
+  display: grid;
+  gap: 12px;
+}
+
+pre {
+  overflow: auto;
+  margin: 0;
+  padding: 14px;
+  border-radius: 6px;
+  background: #0b0f0b;
+  color: #dcead7;
+  line-height: 1.5;
+}
+
+@media (max-width: 860px) {
+  .shell {
+    padding: 14px;
+  }
+
+  .workspace,
+  .metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .viewer {
+    min-height: 300px;
+  }
+}
