@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 
 from .schemas import AnalysisJob, AnalysisSummary
 from .services.analyzer import analyze_video
+from .services.yolo_overlay import create_yolo_overlay_video
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT_DIR / "data"
@@ -107,6 +108,33 @@ def get_overlay(job_id: str) -> FileResponse:
     return FileResponse(overlay_path, media_type="video/mp4")
 
 
+
+@app.post("/api/results/{job_id}/overlay/yolo")
+def create_yolo_overlay(job_id: str, seconds: float = 30, conf: float = 0.25) -> dict[str, str | int | float]:
+    matches = sorted(UPLOAD_DIR.glob(f"{job_id}.*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="元動画が見つかりません")
+
+    output_path = RESULT_DIR / f"{job_id}_overlay.mp4"
+    try:
+        result = create_yolo_overlay_video(
+            input_path=matches[0],
+            output_path=output_path,
+            max_seconds=None if seconds <= 0 else seconds,
+            confidence=conf,
+        )
+    except RuntimeError as exc:
+        logger.exception("yolo_overlay_failed job_id=%s error=%s", job_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {
+        "job_id": job_id,
+        "overlay_url": f"/api/results/{job_id}/overlay",
+        "frames_processed": result.frames_processed,
+        "detections": result.detections,
+        "duration_seconds": result.duration_seconds,
+    }
+
 @app.get("/api/logs")
 def get_logs(lines: int = 200) -> dict[str, list[str]]:
     log_path = LOG_DIR / "backend.log"
@@ -115,4 +143,5 @@ def get_logs(lines: int = 200) -> dict[str, list[str]]:
 
     safe_lines = max(1, min(lines, 1000))
     return {"lines": log_path.read_text(encoding="utf-8").splitlines()[-safe_lines:]}
+
 
