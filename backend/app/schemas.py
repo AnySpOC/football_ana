@@ -39,3 +39,17 @@ class AnalysisJob(BaseModel):
     status: str
     summary: AnalysisSummary
 
+
+class YoloOverlayRequest(BaseModel):
+    seconds: float = Field(default=30, ge=0, description="Max seconds to process. Use 0 for the full video.")
+    confidence: float = Field(default=0.25, ge=0, le=1, description="YOLO detection confidence threshold.")
+
+
+class YoloOverlayResponse(BaseModel):
+    job_id: str
+    overlay_url: str
+    frames_processed: int = Field(ge=0)
+    detections: int = Field(ge=0)
+    duration_seconds: float = Field(ge=0)
+
+
