@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import logging
+import math
 
 logger = logging.getLogger("fooball_ana")
 
@@ -15,6 +16,28 @@ class OverlayResult:
     duration_seconds: float
 
 
+@dataclass(frozen=True)
+class TeamVisual:
+    label: str
+    box_color: tuple[int, int, int]
+    center_bgr: tuple[float, float, float]
+
+
+class TeamColorClassifier:
+    def __init__(self, ally: TeamVisual, opponent: TeamVisual) -> None:
+        self.ally = ally
+        self.opponent = opponent
+
+    def classify(self, frame, x1: int, y1: int, x2: int, y2: int) -> TeamVisual:
+        jersey_color = _extract_jersey_bgr(frame, x1, y1, x2, y2)
+        if jersey_color is None:
+            return self.ally
+
+        ally_distance = _bgr_distance(jersey_color, self.ally.center_bgr)
+        opponent_distance = _bgr_distance(jersey_color, self.opponent.center_bgr)
+        return self.ally if ally_distance <= opponent_distance else self.opponent
+
+
 def create_yolo_overlay_video(
     input_path: Path,
     output_path: Path,
@@ -22,6 +45,7 @@ def create_yolo_overlay_video(
     model_name: str = "yolo11n.pt",
     max_seconds: float | None = 30,
     confidence: float = 0.25,
+    ally_color: str | None = None,
 ) -> OverlayResult:
     try:
         import cv2
@@ -67,6 +91,16 @@ def create_yolo_overlay_video(
     names = model.names
     person_class_ids = {class_id for class_id, name in names.items() if name == "person"}
     ball_class_ids = {class_id for class_id, name in names.items() if name in {"sports ball", "ball"}}
+    team_classifier = _build_team_classifier(
+        capture=capture,
+        model=model,
+        frame_limit=frame_limit,
+        fps=fps,
+        person_class_ids=person_class_ids,
+        confidence=confidence,
+        ally_color=ally_color,
+    )
+    capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     frames_processed = 0
     detections = 0
@@ -90,7 +124,6 @@ def create_yolo_overlay_video(
 
         results = model.predict(frame, conf=confidence, verbose=False)
         boxes = results[0].boxes if results else None
-        person_index = 0
         ball_centers: list[tuple[int, int]] = []
 
         if boxes is not None:
@@ -100,11 +133,9 @@ def create_yolo_overlay_video(
                 x1, y1, x2, y2 = [int(value) for value in box.xyxy[0].tolist()]
 
                 if class_id in person_class_ids:
-                    person_index += 1
-                    is_ally = person_index % 2 == 1
-                    label = f"{'Ally' if is_ally else 'Opponent'} {score:.2f}"
-                    color = (93, 107, 255) if is_ally else (255, 180, 94)
-                    _draw_box(frame, x1, y1, x2, y2, color, label)
+                    team = team_classifier.classify(frame, x1, y1, x2, y2)
+                    label = f"{team.label} {score:.2f}"
+                    _draw_box(frame, x1, y1, x2, y2, team.box_color, label)
                     detections += 1
                 elif class_id in ball_class_ids:
                     cx = int((x1 + x2) / 2)
@@ -139,6 +170,141 @@ def create_yolo_overlay_video(
     )
 
 
+def _build_team_classifier(
+    *,
+    capture,
+    model,
+    frame_limit: int,
+    fps: float,
+    person_class_ids: set[int],
+    confidence: float,
+    ally_color: str | None,
+) -> TeamColorClassifier:
+    import cv2
+    import numpy as np
+
+    max_scan_frames = min(frame_limit, max(1, int(fps * 8)))
+    stride = max(1, int(fps // 2) or 1)
+    samples: list[tuple[float, float, float]] = []
+
+    for frame_index in range(0, max_scan_frames, stride):
+        capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+        ok, frame = capture.read()
+        if not ok:
+            continue
+
+        results = model.predict(frame, conf=confidence, verbose=False)
+        boxes = results[0].boxes if results else None
+        if boxes is None:
+            continue
+
+        for box in boxes:
+            class_id = int(box.cls[0])
+            if class_id not in person_class_ids:
+                continue
+            x1, y1, x2, y2 = [int(value) for value in box.xyxy[0].tolist()]
+            jersey_color = _extract_jersey_bgr(frame, x1, y1, x2, y2)
+            if jersey_color is not None:
+                samples.append(jersey_color)
+
+    if len(samples) < 2:
+        logger.warning("team_color_samples_insufficient count=%s fallback=red_blue", len(samples))
+        return TeamColorClassifier(
+            ally=TeamVisual("Ally", (93, 107, 255), (70.0, 70.0, 210.0)),
+            opponent=TeamVisual("Opponent", (255, 180, 94), (210.0, 120.0, 60.0)),
+        )
+
+    sample_array = np.float32(samples)
+    compactness, labels, centers = cv2.kmeans(
+        sample_array,
+        2,
+        None,
+        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.2),
+        5,
+        cv2.KMEANS_PP_CENTERS,
+    )
+
+    centers_list = [tuple(float(value) for value in center) for center in centers]
+    label_counts = [int((labels == index).sum()) for index in range(2)]
+
+    if ally_color:
+        target = _parse_color_to_bgr(ally_color)
+        ally_index = 0 if _bgr_distance(centers_list[0], target) <= _bgr_distance(centers_list[1], target) else 1
+    else:
+        ally_index = 0 if label_counts[0] >= label_counts[1] else 1
+    opponent_index = 1 - ally_index
+
+    logger.info(
+        "team_color_clusters centers=%s counts=%s compactness=%s ally_index=%s",
+        centers_list,
+        label_counts,
+        compactness,
+        ally_index,
+    )
+
+    return TeamColorClassifier(
+        ally=TeamVisual("Ally", (93, 107, 255), centers_list[ally_index]),
+        opponent=TeamVisual("Opponent", (255, 180, 94), centers_list[opponent_index]),
+    )
+
+
+def _extract_jersey_bgr(frame, x1: int, y1: int, x2: int, y2: int) -> tuple[float, float, float] | None:
+    import cv2
+
+    height, width = frame.shape[:2]
+    x1 = max(0, min(width - 1, x1))
+    x2 = max(0, min(width, x2))
+    y1 = max(0, min(height - 1, y1))
+    y2 = max(0, min(height, y2))
+    box_width = x2 - x1
+    box_height = y2 - y1
+    if box_width < 8 or box_height < 16:
+        return None
+
+    torso_x1 = x1 + int(box_width * 0.2)
+    torso_x2 = x2 - int(box_width * 0.2)
+    torso_y1 = y1 + int(box_height * 0.18)
+    torso_y2 = y1 + int(box_height * 0.55)
+    roi = frame[torso_y1:torso_y2, torso_x1:torso_x2]
+    if roi.size == 0:
+        return None
+
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    mask = (hsv[:, :, 1] > 45) & (hsv[:, :, 2] > 45)
+    if int(mask.sum()) < 12:
+        mask = hsv[:, :, 2] > 35
+    if int(mask.sum()) < 12:
+        return None
+
+    pixels = roi[mask]
+    mean = pixels.reshape(-1, 3).mean(axis=0)
+    return (float(mean[0]), float(mean[1]), float(mean[2]))
+
+
+def _bgr_distance(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    return math.sqrt(sum((a[index] - b[index]) ** 2 for index in range(3)))
+
+
+def _parse_color_to_bgr(value: str) -> tuple[float, float, float]:
+    named = {
+        "red": (40.0, 40.0, 210.0),
+        "blue": (210.0, 90.0, 40.0),
+        "green": (70.0, 180.0, 70.0),
+        "yellow": (40.0, 210.0, 210.0),
+        "white": (230.0, 230.0, 230.0),
+        "black": (25.0, 25.0, 25.0),
+    }
+    normalized = value.strip().lower()
+    if normalized in named:
+        return named[normalized]
+    if normalized.startswith("#") and len(normalized) == 7:
+        red = int(normalized[1:3], 16)
+        green = int(normalized[3:5], 16)
+        blue = int(normalized[5:7], 16)
+        return (float(blue), float(green), float(red))
+    raise ValueError(f"Unsupported ally color: {value}")
+
+
 def _draw_box(frame, x1: int, y1: int, x2: int, y2: int, color: tuple[int, int, int], label: str) -> None:
     import cv2
 
@@ -155,4 +321,3 @@ def _draw_hud(frame, time_seconds: float, pass_counter: int, ball_count: int) ->
     cv2.putText(frame, f"time {time_seconds:.1f}s", (30, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (245, 246, 239), 2, cv2.LINE_AA)
     cv2.putText(frame, f"passes {pass_counter}", (30, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (100, 255, 215), 2, cv2.LINE_AA)
     cv2.putText(frame, f"balls {ball_count}", (30, 104), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (255, 255, 255), 2, cv2.LINE_AA)
-

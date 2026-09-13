@@ -120,6 +120,7 @@ def create_yolo_overlay(job_id: str, request: YoloOverlayRequest = YoloOverlayRe
             output_path=output_path,
             max_seconds=None if request.seconds <= 0 else request.seconds,
             confidence=request.confidence,
+            ally_color=request.ally_color,
         )
     except RuntimeError as exc:
         logger.exception("yolo_overlay_failed job_id=%s error=%s", job_id, exc)
@@ -141,4 +142,5 @@ def get_logs(lines: int = 200) -> dict[str, list[str]]:
 
     safe_lines = max(1, min(lines, 1000))
     return {"lines": log_path.read_text(encoding="utf-8").splitlines()[-safe_lines:]}
+
 

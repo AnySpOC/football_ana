@@ -43,6 +43,7 @@ class AnalysisJob(BaseModel):
 class YoloOverlayRequest(BaseModel):
     seconds: float = Field(default=30, ge=0, description="Max seconds to process. Use 0 for the full video.")
     confidence: float = Field(default=0.25, ge=0, le=1, description="YOLO detection confidence threshold.")
+    ally_color: str | None = Field(default=None, description="Optional ally uniform color name or #RRGGBB.")
 
 
 class YoloOverlayResponse(BaseModel):
@@ -51,5 +52,3 @@ class YoloOverlayResponse(BaseModel):
     frames_processed: int = Field(ge=0)
     detections: int = Field(ge=0)
     duration_seconds: float = Field(ge=0)
-
-

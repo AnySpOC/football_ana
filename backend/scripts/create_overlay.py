@@ -18,6 +18,7 @@ def main() -> None:
     parser.add_argument("--seconds", type=float, default=30, help="Max seconds to process. Use 0 for full video.")
     parser.add_argument("--model", default="yolo11n.pt", help="Ultralytics model name or local model path")
     parser.add_argument("--conf", type=float, default=0.25, help="Detection confidence threshold")
+    parser.add_argument("--ally-color", default=None, help="Optional ally uniform color name or #RRGGBB")
     args = parser.parse_args()
 
     input_path = args.input
@@ -30,6 +31,7 @@ def main() -> None:
         model_name=args.model,
         max_seconds=max_seconds,
         confidence=args.conf,
+        ally_color=args.ally_color,
     )
     print(f"output={result.output_path}")
     print(f"frames={result.frames_processed}")
@@ -39,5 +41,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
