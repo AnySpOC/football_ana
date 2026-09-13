@@ -42,8 +42,11 @@ class AnalysisJob(BaseModel):
 
 class YoloOverlayRequest(BaseModel):
     seconds: float = Field(default=30, ge=0, description="Max seconds to process. Use 0 for the full video.")
-    confidence: float = Field(default=0.25, ge=0, le=1, description="YOLO detection confidence threshold.")
+    confidence: float = Field(default=0.25, ge=0, le=1, description="Person detection confidence threshold.")
+    ball_confidence: float = Field(default=0.12, ge=0, le=1, description="Ball detection confidence threshold.")
+    image_size: int = Field(default=1280, ge=320, le=1920, description="YOLO inference image size.")
     ally_color: str | None = Field(default=None, description="Optional ally uniform color name or #RRGGBB.")
+    swap_teams: bool = Field(default=False, description="Swap Ally/Opponent labels after color clustering.")
 
 
 class YoloOverlayResponse(BaseModel):

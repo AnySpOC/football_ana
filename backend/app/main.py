@@ -120,7 +120,10 @@ def create_yolo_overlay(job_id: str, request: YoloOverlayRequest = YoloOverlayRe
             output_path=output_path,
             max_seconds=None if request.seconds <= 0 else request.seconds,
             confidence=request.confidence,
+            ball_confidence=request.ball_confidence,
+            image_size=request.image_size,
             ally_color=request.ally_color,
+            swap_teams=request.swap_teams,
         )
     except RuntimeError as exc:
         logger.exception("yolo_overlay_failed job_id=%s error=%s", job_id, exc)

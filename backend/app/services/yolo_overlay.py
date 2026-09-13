@@ -45,7 +45,10 @@ def create_yolo_overlay_video(
     model_name: str = "yolo11n.pt",
     max_seconds: float | None = 30,
     confidence: float = 0.25,
+    ball_confidence: float = 0.12,
+    image_size: int = 1280,
     ally_color: str | None = None,
+    swap_teams: bool = False,
 ) -> OverlayResult:
     try:
         import cv2
@@ -99,6 +102,7 @@ def create_yolo_overlay_video(
         person_class_ids=person_class_ids,
         confidence=confidence,
         ally_color=ally_color,
+        swap_teams=swap_teams,
     )
     capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
@@ -122,7 +126,7 @@ def create_yolo_overlay_video(
         if not ok:
             break
 
-        results = model.predict(frame, conf=confidence, verbose=False)
+        results = model.predict(frame, conf=min(confidence, ball_confidence), imgsz=image_size, verbose=False)
         boxes = results[0].boxes if results else None
         ball_centers: list[tuple[int, int]] = []
 
@@ -132,12 +136,12 @@ def create_yolo_overlay_video(
                 score = float(box.conf[0])
                 x1, y1, x2, y2 = [int(value) for value in box.xyxy[0].tolist()]
 
-                if class_id in person_class_ids:
+                if class_id in person_class_ids and score >= confidence:
                     team = team_classifier.classify(frame, x1, y1, x2, y2)
                     label = f"{team.label} {score:.2f}"
                     _draw_box(frame, x1, y1, x2, y2, team.box_color, label)
                     detections += 1
-                elif class_id in ball_class_ids:
+                elif class_id in ball_class_ids and score >= ball_confidence:
                     cx = int((x1 + x2) / 2)
                     cy = int((y1 + y2) / 2)
                     ball_centers.append((cx, cy))
@@ -179,6 +183,7 @@ def _build_team_classifier(
     person_class_ids: set[int],
     confidence: float,
     ally_color: str | None,
+    swap_teams: bool,
 ) -> TeamColorClassifier:
     import cv2
     import numpy as np
@@ -193,7 +198,7 @@ def _build_team_classifier(
         if not ok:
             continue
 
-        results = model.predict(frame, conf=confidence, verbose=False)
+        results = model.predict(frame, conf=confidence, imgsz=1280, verbose=False)
         boxes = results[0].boxes if results else None
         if boxes is None:
             continue
@@ -233,13 +238,16 @@ def _build_team_classifier(
     else:
         ally_index = 0 if label_counts[0] >= label_counts[1] else 1
     opponent_index = 1 - ally_index
+    if swap_teams:
+        ally_index, opponent_index = opponent_index, ally_index
 
     logger.info(
-        "team_color_clusters centers=%s counts=%s compactness=%s ally_index=%s",
+        "team_color_clusters centers=%s counts=%s compactness=%s ally_index=%s swap=%s",
         centers_list,
         label_counts,
         compactness,
         ally_index,
+        swap_teams,
     )
 
     return TeamColorClassifier(

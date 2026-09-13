@@ -17,8 +17,11 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=None, help="Output mp4 path")
     parser.add_argument("--seconds", type=float, default=30, help="Max seconds to process. Use 0 for full video.")
     parser.add_argument("--model", default="yolo11n.pt", help="Ultralytics model name or local model path")
-    parser.add_argument("--conf", type=float, default=0.25, help="Detection confidence threshold")
+    parser.add_argument("--conf", type=float, default=0.25, help="Person detection confidence threshold")
+    parser.add_argument("--ball-conf", type=float, default=0.12, help="Ball detection confidence threshold")
+    parser.add_argument("--imgsz", type=int, default=1280, help="YOLO inference image size")
     parser.add_argument("--ally-color", default=None, help="Optional ally uniform color name or #RRGGBB")
+    parser.add_argument("--swap-teams", action="store_true", help="Swap Ally/Opponent labels after color clustering")
     args = parser.parse_args()
 
     input_path = args.input
@@ -31,7 +34,10 @@ def main() -> None:
         model_name=args.model,
         max_seconds=max_seconds,
         confidence=args.conf,
+        ball_confidence=args.ball_conf,
+        image_size=args.imgsz,
         ally_color=args.ally_color,
+        swap_teams=args.swap_teams,
     )
     print(f"output={result.output_path}")
     print(f"frames={result.frames_processed}")
