@@ -38,6 +38,86 @@ class TeamColorClassifier:
         return self.ally if ally_distance <= opponent_distance else self.opponent
 
 
+@dataclass
+class TeamTrack:
+    track_id: int
+    center: tuple[float, float]
+    bbox: tuple[int, int, int, int]
+    team: TeamVisual
+    disagreement_count: int = 0
+    missed_frames: int = 0
+
+
+class TeamStabilizer:
+    def __init__(self, *, max_distance: float, max_missed_frames: int, switch_frames: int = 8) -> None:
+        self.max_distance = max_distance
+        self.max_missed_frames = max_missed_frames
+        self.switch_frames = switch_frames
+        self.next_track_id = 1
+        self.tracks: list[TeamTrack] = []
+
+    def update(
+        self,
+        detections: list[tuple[int, int, int, int, float, TeamVisual]],
+    ) -> list[tuple[int, int, int, int, float, TeamVisual, int]]:
+        for track in self.tracks:
+            track.missed_frames += 1
+
+        assignments: list[tuple[int, int]] = []
+        used_tracks: set[int] = set()
+        for det_index, detection in enumerate(detections):
+            center = _bbox_center(detection[:4])
+            best_track_index = None
+            best_distance = self.max_distance
+            for track_index, track in enumerate(self.tracks):
+                if track_index in used_tracks:
+                    continue
+                distance = _point_distance(center, track.center)
+                if distance < best_distance:
+                    best_distance = distance
+                    best_track_index = track_index
+            if best_track_index is not None:
+                assignments.append((det_index, best_track_index))
+                used_tracks.add(best_track_index)
+
+        assigned_detections = {det_index for det_index, _ in assignments}
+        output: list[tuple[int, int, int, int, float, TeamVisual, int]] = []
+
+        for det_index, track_index in assignments:
+            x1, y1, x2, y2, score, observed_team = detections[det_index]
+            track = self.tracks[track_index]
+            track.center = _bbox_center((x1, y1, x2, y2))
+            track.bbox = (x1, y1, x2, y2)
+            track.missed_frames = 0
+
+            if observed_team.label == track.team.label:
+                track.disagreement_count = 0
+            else:
+                track.disagreement_count += 1
+                if track.disagreement_count >= self.switch_frames:
+                    track.team = observed_team
+                    track.disagreement_count = 0
+
+            output.append((x1, y1, x2, y2, score, track.team, track.track_id))
+
+        for det_index, detection in enumerate(detections):
+            if det_index in assigned_detections:
+                continue
+            x1, y1, x2, y2, score, observed_team = detection
+            track = TeamTrack(
+                track_id=self.next_track_id,
+                center=_bbox_center((x1, y1, x2, y2)),
+                bbox=(x1, y1, x2, y2),
+                team=observed_team,
+            )
+            self.next_track_id += 1
+            self.tracks.append(track)
+            output.append((x1, y1, x2, y2, score, track.team, track.track_id))
+
+        self.tracks = [track for track in self.tracks if track.missed_frames <= self.max_missed_frames]
+        return output
+
+
 def create_yolo_overlay_video(
     input_path: Path,
     output_path: Path,
@@ -105,6 +185,11 @@ def create_yolo_overlay_video(
         swap_teams=swap_teams,
     )
     capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    team_stabilizer = TeamStabilizer(
+        max_distance=max(48.0, width * 0.055),
+        max_missed_frames=max(4, int(fps * 0.7)),
+        switch_frames=max(4, int(fps * 0.25)),
+    )
 
     frames_processed = 0
     detections = 0
@@ -130,6 +215,7 @@ def create_yolo_overlay_video(
         boxes = results[0].boxes if results else None
         ball_centers: list[tuple[int, int]] = []
 
+        person_detections: list[tuple[int, int, int, int, float, TeamVisual]] = []
         if boxes is not None:
             for box in boxes:
                 class_id = int(box.cls[0])
@@ -137,16 +223,19 @@ def create_yolo_overlay_video(
                 x1, y1, x2, y2 = [int(value) for value in box.xyxy[0].tolist()]
 
                 if class_id in person_class_ids and score >= confidence:
-                    team = team_classifier.classify(frame, x1, y1, x2, y2)
-                    label = f"{team.label} {score:.2f}"
-                    _draw_box(frame, x1, y1, x2, y2, team.box_color, label)
-                    detections += 1
+                    observed_team = team_classifier.classify(frame, x1, y1, x2, y2)
+                    person_detections.append((x1, y1, x2, y2, score, observed_team))
                 elif class_id in ball_class_ids and score >= ball_confidence:
                     cx = int((x1 + x2) / 2)
                     cy = int((y1 + y2) / 2)
                     ball_centers.append((cx, cy))
                     _draw_box(frame, x1, y1, x2, y2, (255, 255, 255), f"Ball {score:.2f}")
                     detections += 1
+
+        for x1, y1, x2, y2, score, team, track_id in team_stabilizer.update(person_detections):
+            label = f"{team.label} #{track_id} {score:.2f}"
+            _draw_box(frame, x1, y1, x2, y2, team.box_color, label)
+            detections += 1
 
         if frames_processed and frames_processed % max(1, int(fps * 4)) == 0:
             pass_counter += 1
@@ -172,6 +261,16 @@ def create_yolo_overlay_video(
         detections=detections,
         duration_seconds=round(frames_processed / fps, 2) if fps else 0,
     )
+
+
+
+def _bbox_center(bbox: tuple[int, int, int, int]) -> tuple[float, float]:
+    x1, y1, x2, y2 = bbox
+    return ((x1 + x2) / 2, (y1 + y2) / 2)
+
+
+def _point_distance(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
 
 def _build_team_classifier(

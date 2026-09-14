@@ -1,0 +1,7 @@
+path: data/datasets/futsal
+train: images/train
+val: images/val
+
+names:
+  0: person
+  1: ball
