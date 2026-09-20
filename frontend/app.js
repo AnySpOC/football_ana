@@ -4,7 +4,8 @@ const SAMPLE_DURATION = 12;
 const text = {
   idle: "\u52d5\u753b\u3092\u9078\u629e\u3059\u308b\u304b\u3001\u30b5\u30f3\u30d7\u30eb\u3092\u8868\u793a\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
   loaded: "\u3092\u8aad\u307f\u8fbc\u307f\u307e\u3057\u305f\u3002",
-  analyzing: "\u89e3\u6790\u4e2d\u3067\u3059\u3002",
+  analyzing: "\u52d5\u753b\u3092\u30a2\u30c3\u30d7\u30ed\u30fc\u30c9\u4e2d\u3067\u3059\u3002",
+  detecting: "YOLO\u3068ByteTrack\u3067\u6700\u521d\u306e30\u79d2\u3092\u89e3\u6790\u4e2d\u3067\u3059\u3002",
   done: "\u89e3\u6790\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\u3002",
   failed: "\u89e3\u6790\u306b\u5931\u6557\u3057\u307e\u3057\u305f",
   sample: "\u30b5\u30f3\u30d7\u30eb\u89e3\u6790\u7d50\u679c\u3092\u8868\u793a\u3057\u3066\u3044\u307e\u3059\u3002",
@@ -43,15 +44,22 @@ const sampleSummary = {
 
 const teamStyle = {
   home: {
-    label: "Ally",
+    label: "Team A",
     color: "#ff6b5d",
     fill: "rgba(255, 107, 93, 0.14)",
   },
   away: {
-    label: "Opponent",
+    label: "Team B",
     color: "#5eb4ff",
     fill: "rgba(94, 180, 255, 0.14)",
   },
+};
+
+const analysisStyle = {
+  team_a: { label: "Team A", color: "#ff6b5d", fill: "rgba(255, 107, 93, 0.14)" },
+  team_b: { label: "Team B", color: "#5eb4ff", fill: "rgba(94, 180, 255, 0.14)" },
+  unknown: { label: "Unknown", color: "#b8c0b8", fill: "rgba(184, 192, 184, 0.12)" },
+  ball: { label: "Ball", color: "#ffffff", fill: "rgba(255, 255, 255, 0.1)" },
 };
 
 const samplePaths = {
@@ -82,9 +90,11 @@ let samplePlaying = false;
 let sampleOffset = 0;
 let sampleStartedAt = 0;
 let animationId = 0;
+let analysisTimeline = null;
 
 videoInput.addEventListener("change", () => {
   selectedFile = videoInput.files?.[0] ?? null;
+  analysisTimeline = null;
   mode = selectedFile ? "video" : "idle";
   samplePlaying = false;
   samplePlaybackButton.disabled = true;
@@ -152,7 +162,24 @@ analyzeButton.addEventListener("click", async () => {
 
     const job = await response.json();
     renderSummary(job.summary);
-    statusText.textContent = text.done;
+    statusText.textContent = text.detecting;
+
+    const analysisResponse = await fetch(`${API_BASE}/api/results/${job.id}/overlay/yolo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ seconds: 30, confidence: 0.25, ball_confidence: 0.1, image_size: 1280 }),
+    });
+    if (!analysisResponse.ok) {
+      const error = await analysisResponse.json();
+      throw new Error(error.detail ?? text.failed);
+    }
+
+    const analysis = await analysisResponse.json();
+    const timelineResponse = await fetch(`${API_BASE}${analysis.timeline_url}`);
+    if (!timelineResponse.ok) throw new Error("\u89e3\u6790\u30bf\u30a4\u30e0\u30e9\u30a4\u30f3\u3092\u53d6\u5f97\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f\u3002");
+    analysisTimeline = await timelineResponse.json();
+    drawVideoOverlay(preview.currentTime || 0);
+    statusText.textContent = `${text.done} ${analysis.frames_processed}\u30d5\u30ec\u30fc\u30e0\u3092\u8ffd\u8de1\u3057\u307e\u3057\u305f\u3002`;
   } catch (error) {
     statusText.textContent = error.message;
   } finally {
@@ -197,8 +224,8 @@ function renderSummary(summary) {
 
   const teamA = summary.teams.find((team) => team.name === "Team A");
   const teamB = summary.teams.find((team) => team.name === "Team B");
-  teamAEl.textContent = teamA ? `${Math.round(teamA.possession_rate * 100)}%` : "--";
-  teamBEl.textContent = teamB ? `${Math.round(teamB.possession_rate * 100)}%` : "--";
+  teamAEl.textContent = Number.isFinite(teamA?.possession_rate) ? `${Math.round(teamA.possession_rate * 100)}%` : "\u672a\u8a08\u6e2c";
+  teamBEl.textContent = Number.isFinite(teamB?.possession_rate) ? `${Math.round(teamB.possession_rate * 100)}%` : "\u672a\u8a08\u6e2c";
 
   summaryEl.textContent = JSON.stringify(summary, null, 2);
 }
@@ -215,24 +242,54 @@ function drawVideoOverlay(time) {
   const w = overlay.width;
   const h = overlay.height;
   ctx.clearRect(0, 0, w, h);
-  if (!selectedFile) return;
+  if (!selectedFile || !analysisTimeline) return;
 
-  const phase = (time % 10) / 10;
-  const passStats = estimateLiveStats(time);
-  const aX = w * (0.16 + phase * 0.26);
-  const bX = w * (0.68 - phase * 0.18);
-  const ballX = w * (0.28 + phase * 0.38);
-  const ballY = h * (0.5 + Math.sin(phase * Math.PI * 2) * 0.11);
+  const fps = analysisTimeline.video.fps || 30;
+  const frameIndex = Math.max(0, Math.round(time * fps));
+  const frame = analysisTimeline.frames[frameIndex];
+  if (!frame) return;
 
-  drawBox(ctx, "Ally #07", teamStyle.home, aX, h * 0.3, 76, 138);
-  drawBox(ctx, "Ally #10", teamStyle.home, aX + w * 0.12, h * 0.48, 78, 132);
-  drawBox(ctx, "Opponent #04", teamStyle.away, bX, h * 0.28, 76, 136);
-  drawBox(ctx, "Opponent #11", teamStyle.away, bX - w * 0.12, h * 0.55, 78, 128);
-  drawPassLine(ctx, teamStyle.home.color, aX + 76, h * 0.3 + 46, ballX, ballY);
-  drawPassLine(ctx, teamStyle.away.color, bX, h * 0.28 + 66, ballX, ballY);
-  drawBall(ctx, ballX, ballY);
-  drawHud(ctx, time, passStats);
-  drawLegend(ctx, passStats);
+  const renderRect = getVideoRenderRect(w, h, analysisTimeline.video.width, analysisTimeline.video.height);
+  frame.objects.forEach((object) => {
+    const [x1, y1, x2, y2] = object.bbox;
+    const x = renderRect.x + x1 * renderRect.scale;
+    const y = renderRect.y + y1 * renderRect.scale;
+    const boxWidth = (x2 - x1) * renderRect.scale;
+    const boxHeight = (y2 - y1) * renderRect.scale;
+    if (object.kind === "ball") {
+      drawBox(ctx, `Ball ${object.confidence.toFixed(2)}`, analysisStyle.ball, x, y, boxWidth, boxHeight);
+      return;
+    }
+
+    const style = analysisStyle[object.team] ?? analysisStyle.unknown;
+    const id = object.track_id == null ? "" : ` #${object.track_id}`;
+    drawBox(ctx, `${style.label}${id} ${object.confidence.toFixed(2)}`, style, x, y, boxWidth, boxHeight);
+  });
+
+  drawDetectionHud(ctx, time, frame.objects);
+}
+
+function getVideoRenderRect(containerWidth, containerHeight, videoWidth, videoHeight) {
+  const scale = Math.min(containerWidth / videoWidth, containerHeight / videoHeight);
+  const width = videoWidth * scale;
+  const height = videoHeight * scale;
+  return {
+    x: (containerWidth - width) / 2,
+    y: (containerHeight - height) / 2,
+    scale,
+  };
+}
+
+function drawDetectionHud(ctx, time, objects) {
+  const players = objects.filter((object) => object.kind === "player").length;
+  const balls = objects.filter((object) => object.kind === "ball").length;
+  ctx.font = "700 13px Arial";
+  ctx.fillStyle = "rgba(0,0,0,0.7)";
+  ctx.fillRect(14, 14, 210, 88);
+  ctx.fillStyle = "#f2f6ef";
+  ctx.fillText(`time ${time.toFixed(1)}s`, 26, 38);
+  ctx.fillText(`players ${players}`, 26, 62);
+  ctx.fillText(`ball detections ${balls}`, 26, 86);
 }
 
 function drawSampleOverlay(time) {
@@ -352,9 +409,9 @@ function drawHud(ctx, time, stats) {
   ctx.fillStyle = "#f2f6ef";
   ctx.fillText(`time ${time.toFixed(1)}s`, 26, 38);
   ctx.fillStyle = teamStyle.home.color;
-  ctx.fillText(`Ally passes ${stats.homePasses}`, 26, 62);
+  ctx.fillText(`Team A passes ${stats.homePasses}`, 26, 62);
   ctx.fillStyle = teamStyle.away.color;
-  ctx.fillText(`Opponent passes ${stats.awayPasses}`, 26, 86);
+  ctx.fillText(`Team B passes ${stats.awayPasses}`, 26, 86);
 }
 
 function drawLegend(ctx, stats) {
@@ -363,8 +420,8 @@ function drawLegend(ctx, stats) {
   ctx.font = "700 13px Arial";
   ctx.fillStyle = "rgba(0,0,0,0.66)";
   ctx.fillRect(x, y, 232, 88);
-  drawLegendRow(ctx, x + 14, y + 24, teamStyle.home.color, "Ally player");
-  drawLegendRow(ctx, x + 14, y + 48, teamStyle.away.color, "Opponent player");
+  drawLegendRow(ctx, x + 14, y + 24, teamStyle.home.color, "Team A player");
+  drawLegendRow(ctx, x + 14, y + 48, teamStyle.away.color, "Team B player");
   ctx.fillStyle = "#ffffff";
   ctx.fillText(`Possession ${stats.possession}%`, x + 14, y + 74);
 }

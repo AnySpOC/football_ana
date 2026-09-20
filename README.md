@@ -32,6 +32,12 @@ data/         ローカル動画・解析結果
 docs/         設計メモ
 ```
 
+## 設計・ライセンス
+
+- [システム設計書 v2](docs/system_design_v2.md)
+- [学習データ作成手順](docs/training_workflow.md)
+- [第三者ソフトウェアと著作権上の注意](THIRD_PARTY_NOTICES.md)
+
 ## 開発ロードマップ
 
 1. 動画アップロードと解析ジョブ作成

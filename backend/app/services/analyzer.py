@@ -1,7 +1,7 @@
 from pathlib import Path
 import logging
 
-from ..schemas import AnalysisSummary, PlayerSummary, TeamSummary, VideoMetadata
+from ..schemas import AnalysisSummary, TeamSummary, VideoMetadata
 
 logger = logging.getLogger("fooball_ana")
 
@@ -9,8 +9,8 @@ logger = logging.getLogger("fooball_ana")
 def analyze_video(job_id: str, video_path: Path, result_dir: Path) -> AnalysisSummary:
     metadata = _read_video_metadata(video_path)
     notes = [
-        "MVPでは動画メタ情報を取得します。",
-        "次の実装でYOLOによる人物・ボール検出、ByteTrackによる追跡、ユニフォーム色分類を追加します。",
+        "動画メタ情報を取得しました。人物・ボール検出は次の解析ステップで実行します。",
+        "ポゼッション、パス、シュート、距離は未計測のためnullです。",
     ]
 
     if metadata.frame_count == 0:
@@ -26,22 +26,20 @@ def analyze_video(job_id: str, video_path: Path, result_dir: Path) -> AnalysisSu
             TeamSummary(
                 name="Team A",
                 color_hex="#e53935",
-                possession_rate=0.52,
-                estimated_passes=0,
-                estimated_shots=0,
+                possession_rate=None,
+                estimated_passes=None,
+                estimated_shots=None,
             ),
             TeamSummary(
                 name="Team B",
                 color_hex="#1e88e5",
-                possession_rate=0.48,
-                estimated_passes=0,
-                estimated_shots=0,
+                possession_rate=None,
+                estimated_passes=None,
+                estimated_shots=None,
             ),
         ],
-        players=[
-            PlayerSummary(track_id="pending", team="unknown", distance_meters=0, confidence=0),
-        ],
-        ball_touch_candidates=0,
+        players=[],
+        ball_touch_candidates=None,
         notes=notes,
     )
 
@@ -102,4 +100,3 @@ def _read_video_metadata(video_path: Path) -> VideoMetadata:
         height=height,
         frame_count=frame_count,
     )
-

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import logging
 import math
@@ -11,6 +12,7 @@ logger = logging.getLogger("fooball_ana")
 @dataclass(frozen=True)
 class OverlayResult:
     output_path: Path
+    timeline_path: Path
     frames_processed: int
     detections: int
     duration_seconds: float
@@ -24,104 +26,59 @@ class TeamVisual:
 
 
 class TeamColorClassifier:
-    def __init__(self, ally: TeamVisual, opponent: TeamVisual) -> None:
-        self.ally = ally
-        self.opponent = opponent
+    def __init__(self, team_a: TeamVisual | None, team_b: TeamVisual | None, unknown: TeamVisual) -> None:
+        self.team_a = team_a
+        self.team_b = team_b
+        self.unknown = unknown
 
     def classify(self, frame, x1: int, y1: int, x2: int, y2: int) -> TeamVisual:
         jersey_color = _extract_jersey_bgr(frame, x1, y1, x2, y2)
-        if jersey_color is None:
-            return self.ally
+        if jersey_color is None or self.team_a is None or self.team_b is None:
+            return self.unknown
 
-        ally_distance = _bgr_distance(jersey_color, self.ally.center_bgr)
-        opponent_distance = _bgr_distance(jersey_color, self.opponent.center_bgr)
-        return self.ally if ally_distance <= opponent_distance else self.opponent
+        team_a_distance = _bgr_distance(jersey_color, self.team_a.center_bgr)
+        team_b_distance = _bgr_distance(jersey_color, self.team_b.center_bgr)
+        return self.team_a if team_a_distance <= team_b_distance else self.team_b
 
 
 @dataclass
-class TeamTrack:
-    track_id: int
-    center: tuple[float, float]
-    bbox: tuple[int, int, int, int]
+class TeamAssignment:
     team: TeamVisual
     disagreement_count: int = 0
-    missed_frames: int = 0
 
 
-class TeamStabilizer:
-    def __init__(self, *, max_distance: float, max_missed_frames: int, switch_frames: int = 8) -> None:
-        self.max_distance = max_distance
-        self.max_missed_frames = max_missed_frames
+class TeamAssignmentSmoother:
+    def __init__(self, *, unknown: TeamVisual, switch_frames: int = 8) -> None:
+        self.unknown = unknown
         self.switch_frames = switch_frames
-        self.next_track_id = 1
-        self.tracks: list[TeamTrack] = []
+        self.assignments: dict[int, TeamAssignment] = {}
 
-    def update(
-        self,
-        detections: list[tuple[int, int, int, int, float, TeamVisual]],
-    ) -> list[tuple[int, int, int, int, float, TeamVisual, int]]:
-        for track in self.tracks:
-            track.missed_frames += 1
+    def resolve(self, track_id: int, observed_team: TeamVisual) -> TeamVisual:
+        assignment = self.assignments.get(track_id)
+        if assignment is None:
+            assignment = TeamAssignment(team=observed_team)
+            self.assignments[track_id] = assignment
+            return assignment.team
 
-        assignments: list[tuple[int, int]] = []
-        used_tracks: set[int] = set()
-        for det_index, detection in enumerate(detections):
-            center = _bbox_center(detection[:4])
-            best_track_index = None
-            best_distance = self.max_distance
-            for track_index, track in enumerate(self.tracks):
-                if track_index in used_tracks:
-                    continue
-                distance = _point_distance(center, track.center)
-                if distance < best_distance:
-                    best_distance = distance
-                    best_track_index = track_index
-            if best_track_index is not None:
-                assignments.append((det_index, best_track_index))
-                used_tracks.add(best_track_index)
+        if observed_team.label == "unknown":
+            return assignment.team
+        if assignment.team.label == "unknown" or observed_team.label == assignment.team.label:
+            assignment.team = observed_team
+            assignment.disagreement_count = 0
+            return assignment.team
 
-        assigned_detections = {det_index for det_index, _ in assignments}
-        output: list[tuple[int, int, int, int, float, TeamVisual, int]] = []
-
-        for det_index, track_index in assignments:
-            x1, y1, x2, y2, score, observed_team = detections[det_index]
-            track = self.tracks[track_index]
-            track.center = _bbox_center((x1, y1, x2, y2))
-            track.bbox = (x1, y1, x2, y2)
-            track.missed_frames = 0
-
-            if observed_team.label == track.team.label:
-                track.disagreement_count = 0
-            else:
-                track.disagreement_count += 1
-                if track.disagreement_count >= self.switch_frames:
-                    track.team = observed_team
-                    track.disagreement_count = 0
-
-            output.append((x1, y1, x2, y2, score, track.team, track.track_id))
-
-        for det_index, detection in enumerate(detections):
-            if det_index in assigned_detections:
-                continue
-            x1, y1, x2, y2, score, observed_team = detection
-            track = TeamTrack(
-                track_id=self.next_track_id,
-                center=_bbox_center((x1, y1, x2, y2)),
-                bbox=(x1, y1, x2, y2),
-                team=observed_team,
-            )
-            self.next_track_id += 1
-            self.tracks.append(track)
-            output.append((x1, y1, x2, y2, score, track.team, track.track_id))
-
-        self.tracks = [track for track in self.tracks if track.missed_frames <= self.max_missed_frames]
-        return output
+        assignment.disagreement_count += 1
+        if assignment.disagreement_count >= self.switch_frames:
+            assignment.team = observed_team
+            assignment.disagreement_count = 0
+        return assignment.team
 
 
 def create_yolo_overlay_video(
     input_path: Path,
     output_path: Path,
     *,
+    timeline_path: Path | None = None,
     model_name: str = "yolo11n.pt",
     max_seconds: float | None = 30,
     confidence: float = 0.25,
@@ -160,6 +117,8 @@ def create_yolo_overlay_video(
         frame_limit = min(total_frames, int(fps * max_seconds)) if total_frames else int(fps * max_seconds)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    timeline_path = timeline_path or output_path.with_name(f"{output_path.stem}_timeline.json")
+    timeline_path.parent.mkdir(parents=True, exist_ok=True)
     writer = cv2.VideoWriter(
         str(output_path),
         cv2.VideoWriter_fourcc(*"mp4v"),
@@ -185,15 +144,14 @@ def create_yolo_overlay_video(
         swap_teams=swap_teams,
     )
     capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
-    team_stabilizer = TeamStabilizer(
-        max_distance=max(48.0, width * 0.055),
-        max_missed_frames=max(4, int(fps * 0.7)),
+    team_smoother = TeamAssignmentSmoother(
+        unknown=team_classifier.unknown,
         switch_frames=max(4, int(fps * 0.25)),
     )
 
     frames_processed = 0
     detections = 0
-    pass_counter = 0
+    timeline_frames: list[dict[str, object]] = []
 
     logger.info(
         "yolo_overlay_start input=%s output=%s model=%s fps=%s size=%sx%s frame_limit=%s",
@@ -211,45 +169,92 @@ def create_yolo_overlay_video(
         if not ok:
             break
 
-        results = model.predict(frame, conf=min(confidence, ball_confidence), imgsz=image_size, verbose=False)
+        results = model.track(
+            frame,
+            persist=True,
+            tracker="bytetrack.yaml",
+            conf=min(confidence, ball_confidence),
+            imgsz=image_size,
+            verbose=False,
+        )
         boxes = results[0].boxes if results else None
-        ball_centers: list[tuple[int, int]] = []
+        frame_objects: list[dict[str, object]] = []
+        player_count = 0
+        ball_count = 0
 
-        person_detections: list[tuple[int, int, int, int, float, TeamVisual]] = []
         if boxes is not None:
             for box in boxes:
                 class_id = int(box.cls[0])
                 score = float(box.conf[0])
                 x1, y1, x2, y2 = [int(value) for value in box.xyxy[0].tolist()]
+                track_id = int(box.id[0]) if box.id is not None else None
 
                 if class_id in person_class_ids and score >= confidence:
                     observed_team = team_classifier.classify(frame, x1, y1, x2, y2)
-                    person_detections.append((x1, y1, x2, y2, score, observed_team))
+                    team = team_smoother.resolve(track_id, observed_team) if track_id is not None else observed_team
+                    display_team = team.label.replace("_", " ").title()
+                    display_id = f" #{track_id}" if track_id is not None else ""
+                    _draw_box(frame, x1, y1, x2, y2, team.box_color, f"{display_team}{display_id} {score:.2f}")
+                    frame_objects.append(
+                        {
+                            "kind": "player",
+                            "track_id": track_id,
+                            "team": team.label,
+                            "bbox": [x1, y1, x2, y2],
+                            "confidence": round(score, 4),
+                        }
+                    )
+                    player_count += 1
+                    detections += 1
                 elif class_id in ball_class_ids and score >= ball_confidence:
-                    cx = int((x1 + x2) / 2)
-                    cy = int((y1 + y2) / 2)
-                    ball_centers.append((cx, cy))
                     _draw_box(frame, x1, y1, x2, y2, (255, 255, 255), f"Ball {score:.2f}")
+                    frame_objects.append(
+                        {
+                            "kind": "ball",
+                            "track_id": track_id,
+                            "team": None,
+                            "bbox": [x1, y1, x2, y2],
+                            "confidence": round(score, 4),
+                        }
+                    )
+                    ball_count += 1
                     detections += 1
 
-        for x1, y1, x2, y2, score, team, track_id in team_stabilizer.update(person_detections):
-            label = f"{team.label} #{track_id} {score:.2f}"
-            _draw_box(frame, x1, y1, x2, y2, team.box_color, label)
-            detections += 1
-
-        if frames_processed and frames_processed % max(1, int(fps * 4)) == 0:
-            pass_counter += 1
-
-        _draw_hud(frame, frames_processed / fps, pass_counter, len(ball_centers))
+        timeline_frames.append(
+            {
+                "frame_index": frames_processed,
+                "timestamp_ms": round(frames_processed / fps * 1000) if fps else 0,
+                "objects": frame_objects,
+            }
+        )
+        _draw_hud(frame, frames_processed / fps, player_count, ball_count)
         writer.write(frame)
         frames_processed += 1
 
     capture.release()
     writer.release()
 
+    timeline = {
+        "schema_version": 1,
+        "video": {
+            "fps": round(fps, 4),
+            "width": width,
+            "height": height,
+            "duration_seconds": round(frames_processed / fps, 3) if fps else 0,
+        },
+        "teams": [
+            {"id": "team_a", "display_name": "Team A"},
+            {"id": "team_b", "display_name": "Team B"},
+            {"id": "unknown", "display_name": "Unknown"},
+        ],
+        "frames": timeline_frames,
+    }
+    timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+
     logger.info(
-        "yolo_overlay_done output=%s frames=%s detections=%s duration=%s",
+        "yolo_overlay_done output=%s timeline=%s frames=%s detections=%s duration=%s",
         output_path,
+        timeline_path,
         frames_processed,
         detections,
         frames_processed / fps if fps else 0,
@@ -257,20 +262,11 @@ def create_yolo_overlay_video(
 
     return OverlayResult(
         output_path=output_path,
+        timeline_path=timeline_path,
         frames_processed=frames_processed,
         detections=detections,
         duration_seconds=round(frames_processed / fps, 2) if fps else 0,
     )
-
-
-
-def _bbox_center(bbox: tuple[int, int, int, int]) -> tuple[float, float]:
-    x1, y1, x2, y2 = bbox
-    return ((x1 + x2) / 2, (y1 + y2) / 2)
-
-
-def _point_distance(a: tuple[float, float], b: tuple[float, float]) -> float:
-    return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
 
 def _build_team_classifier(
@@ -312,10 +308,11 @@ def _build_team_classifier(
                 samples.append(jersey_color)
 
     if len(samples) < 2:
-        logger.warning("team_color_samples_insufficient count=%s fallback=red_blue", len(samples))
+        logger.warning("team_color_samples_insufficient count=%s fallback=unknown", len(samples))
         return TeamColorClassifier(
-            ally=TeamVisual("Ally", (93, 107, 255), (70.0, 70.0, 210.0)),
-            opponent=TeamVisual("Opponent", (255, 180, 94), (210.0, 120.0, 60.0)),
+            team_a=None,
+            team_b=None,
+            unknown=TeamVisual("unknown", (160, 160, 160), (0.0, 0.0, 0.0)),
         )
 
     sample_array = np.float32(samples)
@@ -333,25 +330,26 @@ def _build_team_classifier(
 
     if ally_color:
         target = _parse_color_to_bgr(ally_color)
-        ally_index = 0 if _bgr_distance(centers_list[0], target) <= _bgr_distance(centers_list[1], target) else 1
+        team_a_index = 0 if _bgr_distance(centers_list[0], target) <= _bgr_distance(centers_list[1], target) else 1
     else:
-        ally_index = 0 if label_counts[0] >= label_counts[1] else 1
-    opponent_index = 1 - ally_index
+        team_a_index = 0 if label_counts[0] >= label_counts[1] else 1
+    team_b_index = 1 - team_a_index
     if swap_teams:
-        ally_index, opponent_index = opponent_index, ally_index
+        team_a_index, team_b_index = team_b_index, team_a_index
 
     logger.info(
-        "team_color_clusters centers=%s counts=%s compactness=%s ally_index=%s swap=%s",
+        "team_color_clusters centers=%s counts=%s compactness=%s team_a_index=%s swap=%s",
         centers_list,
         label_counts,
         compactness,
-        ally_index,
+        team_a_index,
         swap_teams,
     )
 
     return TeamColorClassifier(
-        ally=TeamVisual("Ally", (93, 107, 255), centers_list[ally_index]),
-        opponent=TeamVisual("Opponent", (255, 180, 94), centers_list[opponent_index]),
+        team_a=TeamVisual("team_a", (93, 107, 255), centers_list[team_a_index]),
+        team_b=TeamVisual("team_b", (255, 180, 94), centers_list[team_b_index]),
+        unknown=TeamVisual("unknown", (160, 160, 160), (0.0, 0.0, 0.0)),
     )
 
 
@@ -421,10 +419,10 @@ def _draw_box(frame, x1: int, y1: int, x2: int, y2: int, color: tuple[int, int, 
     cv2.putText(frame, label, (x1 + 4, y1 - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (8, 12, 8), 1, cv2.LINE_AA)
 
 
-def _draw_hud(frame, time_seconds: float, pass_counter: int, ball_count: int) -> None:
+def _draw_hud(frame, time_seconds: float, player_count: int, ball_count: int) -> None:
     import cv2
 
     cv2.rectangle(frame, (16, 16), (300, 112), (0, 0, 0), -1)
     cv2.putText(frame, f"time {time_seconds:.1f}s", (30, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (245, 246, 239), 2, cv2.LINE_AA)
-    cv2.putText(frame, f"passes {pass_counter}", (30, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (100, 255, 215), 2, cv2.LINE_AA)
-    cv2.putText(frame, f"balls {ball_count}", (30, 104), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(frame, f"players {player_count}", (30, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (100, 255, 215), 2, cv2.LINE_AA)
+    cv2.putText(frame, f"ball detections {ball_count}", (30, 104), cv2.FONT_HERSHEY_SIMPLEX, 0.64, (255, 255, 255), 2, cv2.LINE_AA)

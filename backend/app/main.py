@@ -107,6 +107,15 @@ def get_overlay(job_id: str) -> FileResponse:
     return FileResponse(overlay_path, media_type="video/mp4")
 
 
+@app.get("/api/results/{job_id}/timeline")
+def get_timeline(job_id: str) -> FileResponse:
+    timeline_path = RESULT_DIR / f"{job_id}_timeline.json"
+    if not timeline_path.exists():
+        raise HTTPException(status_code=404, detail="解析タイムラインはまだ作成されていません")
+
+    return FileResponse(timeline_path, media_type="application/json")
+
+
 @app.post("/api/results/{job_id}/overlay/yolo", response_model=YoloOverlayResponse)
 def create_yolo_overlay(job_id: str, request: YoloOverlayRequest = YoloOverlayRequest()) -> YoloOverlayResponse:
     matches = sorted(UPLOAD_DIR.glob(f"{job_id}.*"))
@@ -114,10 +123,12 @@ def create_yolo_overlay(job_id: str, request: YoloOverlayRequest = YoloOverlayRe
         raise HTTPException(status_code=404, detail="元動画が見つかりません")
 
     output_path = RESULT_DIR / f"{job_id}_overlay.mp4"
+    timeline_path = RESULT_DIR / f"{job_id}_timeline.json"
     try:
         result = create_yolo_overlay_video(
             input_path=matches[0],
             output_path=output_path,
+            timeline_path=timeline_path,
             max_seconds=None if request.seconds <= 0 else request.seconds,
             confidence=request.confidence,
             ball_confidence=request.ball_confidence,
@@ -132,6 +143,7 @@ def create_yolo_overlay(job_id: str, request: YoloOverlayRequest = YoloOverlayRe
     return YoloOverlayResponse(
         job_id=job_id,
         overlay_url=f"/api/results/{job_id}/overlay",
+        timeline_url=f"/api/results/{job_id}/timeline",
         frames_processed=result.frames_processed,
         detections=result.detections,
         duration_seconds=result.duration_seconds,

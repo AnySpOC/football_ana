@@ -20,8 +20,8 @@ def main() -> None:
     parser.add_argument("--conf", type=float, default=0.25, help="Person detection confidence threshold")
     parser.add_argument("--ball-conf", type=float, default=0.12, help="Ball detection confidence threshold")
     parser.add_argument("--imgsz", type=int, default=1280, help="YOLO inference image size")
-    parser.add_argument("--ally-color", default=None, help="Optional ally uniform color name or #RRGGBB")
-    parser.add_argument("--swap-teams", action="store_true", help="Swap Ally/Opponent labels after color clustering")
+    parser.add_argument("--ally-color", default=None, help="Optional Team A uniform color name or #RRGGBB")
+    parser.add_argument("--swap-teams", action="store_true", help="Swap Team A/Team B labels after color clustering")
     args = parser.parse_args()
 
     input_path = args.input
@@ -40,6 +40,7 @@ def main() -> None:
         swap_teams=args.swap_teams,
     )
     print(f"output={result.output_path}")
+    print(f"timeline={result.timeline_path}")
     print(f"frames={result.frames_processed}")
     print(f"detections={result.detections}")
     print(f"duration={result.duration_seconds}s")
